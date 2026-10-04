@@ -1,6 +1,6 @@
 # Author Outreach — Prospect Intelligence System
 
-A profiling-only prospecting system for a book-marketing business targeting
+A public-data author research system for a book-marketing business targeting
 romantasy / series-fiction indie authors (US/UK market). It **discovers,
 cross-references and qualifies authors** — it never sends messages. You review
 each profile and draft the personalized outreach yourself.
@@ -46,11 +46,10 @@ python3 run_discovery.py --list   # show all platforms & their status
    weak advertising content** (✓ / ✗ / ? = unknown yet).
 3. **Author profile** — everything in one place:
    - identities across platforms (spotted-count, last seen)
-    - books with direct source listing links, genre, popularity, ratings,
-       **Amazon/Goodreads check links**
-    - publicly listed email addresses and author/contact websites, each linked
-       to the page where it was found
-     and manual review-count fields (flags update instantly)
+   - books with direct source listing links, genre, popularity, ratings,
+     **Amazon/Goodreads check links**, and manual review-count fields
+   - publicly listed email addresses and author/contact websites, each linked
+     to the page where it was found
    - activity (last post, posts/month), detected marketing gaps,
      suggested outreach angle, source-tagged evidence posts
    - **Your notes** — the draft message, private, never auto-sent
