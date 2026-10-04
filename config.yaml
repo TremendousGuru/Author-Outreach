@@ -1,0 +1,147 @@
+project: author-outreach
+niche: romantasy_series_fiction
+target_market: "US/UK English-language indie authors"
+
+contact_enrichment:
+  max_authors_per_crawl: 12
+  max_pages_per_site: 4
+  max_sites_per_author: 2
+  delay_seconds: 0.8
+
+sources:
+  bluesky:
+    enabled: true
+    queries:
+      - "romantasy author"
+      - "debut romantasy"
+      - "indie fantasy author"
+      - "paranormal romance author"
+      - "self-published fantasy author"
+      - "fantasy romance series author"
+    actors_per_query: 25
+    check_activity_for_top: 30
+
+  reddit:
+    enabled: true
+    mode: rss
+    subreddits:
+      - selfpublish
+      - romanceauthors
+      - fantasywriters
+      - IndieAuthor
+      - authors
+    posts_per_subreddit: 50
+    lookback_days: 60
+
+  royalroad:
+    enabled: true
+    listings: [rising-stars, latest-updates]   # best-rated, trending also work
+    max_fictions: 12
+
+  booksie:
+    enabled: true
+    max_postings: 12
+
+  mybookcave:
+    enabled: true
+    max_books: 12
+
+  # ---- deferred (JS-rendered sites; need a headless browser later) ----
+  smashwords: {enabled: false}
+  allauthor: {enabled: false}
+  reedsy: {enabled: false}
+  bookcommentary: {enabled: false}
+
+scoring:
+  genre_specific:
+    - "romantasy"
+    - "romantic fantasy"
+    - "fantasy romance"
+    - "paranormal romance"
+    - "fae romance"
+    - "fae"
+    - "enemies to lovers"
+    - "why choose"
+    - "dark romance"
+    - "sapphic romance"
+    - "shifter romance"
+    - "vampire romance"
+  genre_broad:
+    - "fantasy"
+    - "romance"
+    - "magic"
+    - "dragon"
+    - "witch"
+  author_keywords:
+    - "author"
+    - "writer"
+    - "novelist"
+    - "indie"
+    - "self-pub"
+    - "self published"
+    - "selfpublished"
+    - "kdp"
+    - "kindle"
+    - "ebook"
+    - "paperback"
+    - "novel"
+    - "i published"
+    - "i wrote"
+    - "my book"
+  debut_keywords:
+    - "debut"
+    - "first book"
+    - "book one"
+    - "book 1"
+    - "first novel"
+    - "preorder"
+    - "pre-order"
+    - "cover reveal"
+    - "book launch"
+    - "just published"
+    - "new release"
+    - "launching"
+    - "coming soon"
+  series_keywords:
+    - "series"
+    - "trilogy"
+    - "saga"
+    - "book 2"
+    - "book 3"
+    - "book two"
+    - "book three"
+    - "sequel"
+  pain_keywords:
+    - "no sales"
+    - "slow sales"
+    - "not selling"
+    - "struggling"
+    - "need reviews"
+    - "launch team"
+    - "street team"
+    - "arc readers"
+    - "newsletter"
+    - "mailing list"
+    - "email list"
+    - "promo"
+    - "marketing"
+    - "algorithm"
+    - "visibility"
+    - "discoverability"
+  exclude_keywords:
+    - "cover design"
+    - "cover artist"
+    - "literary agent"
+    - "freelance editor"
+    - "book editor"
+    - "book blogger"
+    - "book reviewer"
+    - "booktube"
+    - "book marketing"
+    - "publishing services"
+    - "virtual assistant"
+
+export:
+  out_dir: data
+  csv: leads.csv
+  report: leads_report.md
