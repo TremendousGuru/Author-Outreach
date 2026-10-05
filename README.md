@@ -77,7 +77,7 @@ python3 run_discovery.py --list   # show all platforms & their status
 1. **Crawl** — one platform at a time, selected from the dropdown, live log.
 2. **Leads** — filter by platform / tier / your criteria / status / search.
   Admins see all generated leads without a score cutoff; user accounts only
-  see their own leads.
+  see their own leads. Select a table row to open that author's profile.
    Criteria flags: **0–50 reviews · just launched · not yet popular ·
    weak advertising content** (✓ / ✗ / ? = unknown yet).
 3. **Author profile** — everything in one place:

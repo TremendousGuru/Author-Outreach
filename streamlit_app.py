@@ -154,11 +154,15 @@ def leads_page(conn, user):
     rows = [{"Score": author["heat_score"], "Author": author["display_name"],
              "Status": author["status"], "Last seen": author["last_seen"]}
             for author in authors]
-    st.dataframe(rows, use_container_width=True, hide_index=True)
-    options = {f"{author['display_name'] or 'Unknown'} (#{author['id']})": author["id"]
-               for author in authors}
-    selected = st.selectbox("Open author", list(options))
-    author_profile(conn, options[selected], user["id"], is_admin=user["role"] == "admin")
+    st.caption("Select a table row to open that author's profile.")
+    selection = st.dataframe(
+        rows, use_container_width=True, hide_index=True,
+        on_select="rerun", selection_mode="single-row",
+        key=f"leads-{user['id']}-{platform}-{status}-{search}")
+    if selection.selection.rows:
+        selected_index = selection.selection.rows[0]
+        author_profile(conn, authors[selected_index]["id"], user["id"],
+                       is_admin=user["role"] == "admin")
 
 
 def author_profile(conn, author_id, user_id, is_admin=False):
