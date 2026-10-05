@@ -34,8 +34,11 @@ python3 run_discovery.py --list   # show all platforms & their status
 | **Royal Road** | serialized fantasy/romantasy — followers, **ratings count**, publish date (JSON-LD) | ✅ working |
 | **Booksie** | newest genre postings via sitemap — reads/likes/comments | ✅ working |
 | **My Book Cave** | promo-listed books — author, genre, content rating, retailer, date | ✅ working |
-| Smashwords / AllAuthor / Reedsy | — | ⏸ deferred: sites are JS-rendered (need a headless browser later) |
-| Book Commentary | — | ⛔ blocks bots |
+| **Smashwords** | public book/search pages, author pages, genre hits | ✅ working |
+| **AllAuthor** | public author directory and profiles | ✅ working |
+| **Reedsy Discovery** | public discovery pages and book listings | ✅ working |
+| **Wattpad** | public stories and author profile pages | ✅ working |
+| Book Commentary | — | ⛔ dead / not a valid crawl target |
 | Facebook / Instagram / Threads / Amazon / Goodreads | — | deliberately excluded (ban/ToS risk) |
 
 ## The workflow the dashboard supports

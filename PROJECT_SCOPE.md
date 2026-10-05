@@ -28,9 +28,10 @@ messaging of any kind.**
 | 4 | **AllAuthor** | ✅ Verified crawlable | author directory, author profiles, books, links to their sites | ✅ |
 | 5 | **Booksie** | ✅ Verified (via sitemap) | self-pub books, author portfolios, read/comment counts | ✅ |
 | 6 | **My Book Cave** (what you called "BookCave") | ✅ Verified crawlable | promo-listed books, genres, author info | ✅ |
-| 7 | **Reedsy Discovery** | ⚠️ Reachable; browse URL changed — verify at build | new indie books + review counts | ✅ |
-| 8 | **Royal Road** | ⚠️ Cloudflare may challenge; verify from your machine | serialized fantasy/romantasy, **ratings count, followers**, author pages | ✅ |
-| 9 | **Book Commentary** | ❌ Blocks bots (403) | — (manual browsing only, or drop) | — |
+| 7 | **Reedsy Discovery** | ✅ Verified via public discovery pages | new indie books + review counts | ✅ |
+| 8 | **Wattpad** | ✅ Verified via public story/search pages | public stories, author metadata, romance/fantasy titles | ✅ |
+| 9 | **Royal Road** | ⚠️ Cloudflare may challenge; verify from your machine | serialized fantasy/romantasy, **ratings count, followers**, author pages | ✅ |
+| 10 | **Book Commentary** | ❌ Dead / not a valid public crawl target | — (manual browsing only, or drop) | — |
 
 **Named corrections found during verification:** `bookcave.com` is a parked ad
 domain — the real site is **mybookcave.com**. `bookcommentary.com` actively

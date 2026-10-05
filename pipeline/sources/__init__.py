@@ -33,20 +33,20 @@ REGISTRY = {
         "note": "Promo-listed books — author, genre, retailer, content rating",
     },
     "smashwords": {
-        "label": "Smashwords", "built": False, "status": "deferred",
-        "group": "Store", "note": "Site is now JS-rendered — needs headless browser (roadmap)",
+        "label": "Smashwords", "built": True, "status": "ok",
+        "group": "Store", "note": "Public HTML search + book pages; browser fallback is supported if needed",
     },
     "allauthor": {
-        "label": "AllAuthor", "built": False, "status": "deferred",
-        "group": "Directory", "note": "Directory is JS-rendered — needs headless browser (roadmap)",
+        "label": "AllAuthor", "built": True, "status": "ok",
+        "group": "Directory", "note": "Author directory and public profiles are now reachable through the crawler",
     },
     "reedsy": {
-        "label": "Reedsy Discovery", "built": False, "status": "deferred",
-        "group": "Discovery", "note": "JS-rendered — needs headless browser (roadmap)",
+        "label": "Reedsy Discovery", "built": True, "status": "ok",
+        "group": "Discovery", "note": "Public discovery pages are included in the active crawl set",
     },
-    "bookcommentary": {
-        "label": "Book Commentary", "built": False, "status": "blocked",
-        "group": "Reviews", "note": "Blocks bots (403) — manual browsing only",
+    "wattpad": {
+        "label": "Wattpad", "built": True, "status": "ok",
+        "group": "Writing community", "note": "Public stories and author pages; no login required for the crawl",
     },
 }
 
@@ -67,4 +67,16 @@ def get_adapter(key):
     if key == "mybookcave":
         from pipeline.sources import mybookcave
         return mybookcave
+    if key == "smashwords":
+        from pipeline.sources import smashwords
+        return smashwords
+    if key == "allauthor":
+        from pipeline.sources import allauthor
+        return allauthor
+    if key == "reedsy":
+        from pipeline.sources import reedsy
+        return reedsy
+    if key == "wattpad":
+        from pipeline.sources import wattpad
+        return wattpad
     raise KeyError(f"no adapter for {key}")

@@ -46,11 +46,11 @@ sources:
     enabled: true
     max_books: 12
 
-  # ---- deferred (JS-rendered sites; need a headless browser later) ----
-  smashwords: {enabled: false}
-  allauthor: {enabled: false}
-  reedsy: {enabled: false}
-  bookcommentary: {enabled: false}
+  # ---- active public crawls (browser-safe fallback included) ----
+  smashwords: {enabled: true, max_books: 6}
+  allauthor: {enabled: true, max_authors: 6}
+  reedsy: {enabled: true, max_books: 6}
+  wattpad: {enabled: true, max_stories: 6}
 
 scoring:
   genre_specific:
