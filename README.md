@@ -13,6 +13,37 @@ pip install -r requirements.txt   # requests + PyYAML only
 python3 server.py                 # → http://localhost:8000
 ```
 
+## Deploy on Streamlit Community Cloud
+
+The Community Cloud app uses `streamlit_app.py` as its entrypoint. In the
+Community Cloud deployment form, select this repository, the `main` branch,
+and `streamlit_app.py`. The dependencies are listed in `requirements.txt`.
+
+Before launching, add the following under **App settings → Secrets**. Use a
+unique password of at least 12 characters; do not commit the secrets to GitHub.
+
+```toml
+[admin]
+username = "Tremendous"
+email = "admin@example.com"
+password = "REPLACE_WITH_A_LONG_RANDOM_PASSWORD"
+```
+
+To run the same interface locally:
+
+```bash
+pip install -r requirements.txt
+streamlit run streamlit_app.py
+```
+
+New signups require administrator approval. Crawling and match review are
+administrator-only because the existing crawler and matching pipeline use
+shared database operations. Community Cloud's local filesystem is ephemeral:
+the SQLite database and crawl results can be lost when the app restarts or is
+recreated. This deployment is suitable for evaluation; durable multi-user use
+requires a persistent external database. Generated exports and databases are
+excluded from Git.
+
 Then: **Crawl** tab → pick a platform from the dropdown → **Start crawl** →
 watch profiles arrive live → **Leads** tab → open a profile → use the check
 links + type review counts → write your draft in **Your notes** → set status.

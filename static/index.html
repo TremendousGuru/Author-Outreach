@@ -133,10 +133,96 @@ const esc = s => String(s ?? "").replace(/[&<>"']/g,
 async function api(path, method="GET", body=null){
   const r = await fetch(path, {
     method,
+    credentials: "same-origin",
     headers: body ? {"Content-Type":"application/json"} : {},
     body: body ? JSON.stringify(body) : null
   });
   return r.json();
+}
+
+let currentUser = null;
+
+async function ensureSession(){
+  try {
+    const d = await api("/api/auth/me");
+    currentUser = d.user || null;
+    return !!currentUser;
+  } catch (e) {
+    currentUser = null;
+    return false;
+  }
+}
+
+function renderAuth(){
+  main.innerHTML = `
+    <div class="card" style="max-width:520px;margin:48px auto 0;">
+      <h1>Welcome back</h1>
+      <p class="sub">Sign in to access your outreach workspace.</p>
+      <div class="grid" style="grid-template-columns:1fr 1fr;gap:18px;">
+        <div>
+          <h2>Login</h2>
+          <div class="row" style="display:grid;gap:12px;">
+            <div>
+              <label>Username</label>
+              <input id="login-user" type="text" placeholder="Tremendous">
+            </div>
+            <div>
+              <label>Password</label>
+              <input id="login-pass" type="password" placeholder="••••••••">
+            </div>
+            <button onclick="loginUser()">Login</button>
+          </div>
+        </div>
+        <div>
+          <h2>Request access</h2>
+          <div class="row" style="display:grid;gap:12px;">
+            <div>
+              <label>Username</label>
+              <input id="signup-user" type="text" placeholder="your username">
+            </div>
+            <div>
+              <label>Email</label>
+              <input id="signup-email" type="email" placeholder="you@example.com">
+            </div>
+            <div>
+              <label>Password</label>
+              <input id="signup-pass" type="password" placeholder="Create a password">
+            </div>
+            <button class="secondary" onclick="signupUser()">Create account</button>
+          </div>
+        </div>
+      </div>
+    </div>`;
+}
+
+async function loginUser(){
+  const username = $("#login-user").value.trim();
+  const password = $("#login-pass").value;
+  const r = await api("/api/auth/login", "POST", {username, password});
+  if (!r.ok) { toast(r.error || "Login failed", false); return; }
+  currentUser = r.user;
+  toast("Logged in as " + currentUser.username);
+  location.hash = "#/crawl";
+  route();
+}
+
+async function signupUser(){
+  const username = $("#signup-user").value.trim();
+  const email = $("#signup-email").value.trim();
+  const password = $("#signup-pass").value;
+  const r = await api("/api/auth/signup", "POST", {username, email, password});
+  if (!r.ok) { toast(r.error || "Signup failed", false); return; }
+  toast("Account created — pending admin approval.");
+  $("#signup-user").value = "";
+  $("#signup-email").value = "";
+  $("#signup-pass").value = "";
+}
+
+async function logoutUser(){
+  await api("/api/auth/logout", "POST", {});
+  currentUser = null;
+  location.hash = "#/login";
+  renderAuth();
 }
 function toast(msg, ok=true){
   const t = $("#toast");
@@ -168,6 +254,15 @@ const statusBadge = s => `<span class="badge b-status-${esc(s)}">${esc(s)}</span
 // ---------------------------------------------------------------- router
 window.addEventListener("hashchange", route);
 async function route(){
+  const loggedIn = await ensureSession();
+  if (!loggedIn && location.hash !== "#/login" && location.hash !== "#/signup" && location.hash !== "#/admin") {
+    renderAuth();
+    return;
+  }
+  if (!loggedIn) {
+    renderAuth();
+    return;
+  }
   const h = location.hash || "#/crawl";
   const [_, view, arg] = h.split("/");
   document.querySelectorAll("nav a").forEach(a=>a.classList.remove("active"));
@@ -576,8 +671,8 @@ async function resolveMatch(id, action){
 // ---------------------------------------------------------------- EXPORT
 async function doExport(){
   const r = await api("/api/export","POST",{});
-  r.ok!==undefined && !r.error ? toast("Exported: " + r.csv.split("/").slice(-2).join("/") + " and the briefing")
-                               : toast("Export failed", false);
+  r.csv && r.md && !r.error ? toast("Exported: " + r.csv.split("/").slice(-2).join("/") + " and the briefing")
+                              : toast("Export failed", false);
 }
 route();
 </script>

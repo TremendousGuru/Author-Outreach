@@ -21,6 +21,8 @@ from pipeline import contacts, db, matching, report, scoring # noqa: E402
 from pipeline.crawler import CrawlManager, load_config      # noqa: E402
 from pipeline.sources import REGISTRY                       # noqa: E402
 
+COOKIE_NAME = "author_outreach_session"
+
 CONFIG_PATH = os.path.join(BASE, "config.yaml")
 STATIC_DIR = os.path.join(BASE, "static")
 manager = CrawlManager(CONFIG_PATH)
@@ -43,7 +45,31 @@ def check_links(book, author_name):
     }
 
 
-def leads_payload(conn, qs):
+def get_current_user(req):
+    token = None
+    if req.headers.get("Authorization", "").startswith("Bearer "):
+        token = req.headers.get("Authorization").split(" ", 1)[1].strip()
+    if not token:
+        token = req.headers.get("Cookie", "").split(COOKIE_NAME + "=", 1)[1].split(";", 1)[0] if COOKIE_NAME + "=" in req.headers.get("Cookie", "") else None
+    if not token:
+        return None
+    conn = db.get_conn()
+    try:
+        return db.get_session_user(conn, token)
+    finally:
+        conn.close()
+
+
+def require_user(req):
+    user = get_current_user(req)
+    if not user:
+        raise PermissionError("login required")
+    if user["status"] != "approved":
+        raise PermissionError("account is pending approval")
+    return user
+
+
+def leads_payload(conn, qs, user_id=None):
     platform = qs.get("platform", [""])[0]
     tier = qs.get("tier", [""])[0]
     status = qs.get("status", [""])[0]
@@ -58,6 +84,9 @@ def leads_payload(conn, qs):
 
     sql = "SELECT a.* FROM authors a WHERE 1=1"
     args = []
+    if user_id is not None:
+        sql += " AND a.user_id=?"
+        args.append(user_id)
     if platform:
         sql += " AND EXISTS (SELECT 1 FROM identities i WHERE i.author_id=a.id AND i.platform=?)"
         args.append(platform)
@@ -88,19 +117,19 @@ def leads_payload(conn, qs):
     if ids:
         chunk = ",".join("?" * len(ids))
         for r in conn.execute(
-                f"SELECT author_id, platform FROM identities WHERE author_id IN ({chunk})", ids):
+                f"SELECT author_id, platform FROM identities WHERE author_id IN ({chunk}) AND (user_id IS NULL OR user_id=?)", [*ids, user_id] if user_id is not None else ids):
             plats.setdefault(r["author_id"], []).append(r["platform"])
         for r in conn.execute(
-                f"SELECT author_id, COUNT(*) c FROM books WHERE author_id IN ({chunk}) GROUP BY author_id", ids):
+                f"SELECT author_id, COUNT(*) c FROM books WHERE author_id IN ({chunk}) AND (user_id IS NULL OR user_id=?) GROUP BY author_id", [*ids, user_id] if user_id is not None else ids):
             books_n[r["author_id"]] = r["c"]
         for r in conn.execute(
-                f"SELECT author_id, gap FROM gaps WHERE author_id IN ({chunk})", ids):
+                f"SELECT author_id, gap FROM gaps WHERE author_id IN ({chunk}) AND (user_id IS NULL OR user_id=?)", [*ids, user_id] if user_id is not None else ids):
             gap_keys.setdefault(r["author_id"], []).append(r["gap"])
         for r in conn.execute(
-                f"SELECT * FROM books WHERE author_id IN ({chunk})", ids):
+                f"SELECT * FROM books WHERE author_id IN ({chunk}) AND (user_id IS NULL OR user_id=?)", [*ids, user_id] if user_id is not None else ids):
             books_map.setdefault(r["author_id"], []).append(r)
         for r in conn.execute(
-                f"SELECT author_id, kind FROM contacts WHERE author_id IN ({chunk})", ids):
+                f"SELECT author_id, kind FROM contacts WHERE author_id IN ({chunk}) AND (user_id IS NULL OR user_id=?)", [*ids, user_id] if user_id is not None else ids):
             contact_kinds.setdefault(r["author_id"], set()).add(r["kind"])
 
     annotated = []
@@ -128,14 +157,23 @@ def leads_payload(conn, qs):
             "total": total, "page": page, "pages": pages}
 
 
-def author_payload(conn, aid):
-    a = conn.execute("SELECT * FROM authors WHERE id=?", (aid,)).fetchone()
+def author_payload(conn, aid, user_id=None):
+    if user_id is not None:
+        a = conn.execute("SELECT * FROM authors WHERE id=? AND user_id=?", (aid, user_id)).fetchone()
+    else:
+        a = conn.execute("SELECT * FROM authors WHERE id=?", (aid,)).fetchone()
     if not a:
         return None
     idents = [dict(r) for r in conn.execute(
         "SELECT * FROM identities WHERE author_id=? ORDER BY first_seen", (aid,))]
+    if user_id is not None:
+        idents = [i for i in idents if i.get('user_id') in (None, user_id)]
     books = [dict(r) for r in db.get_books(conn, aid)]
+    if user_id is not None:
+        books = [b for b in books if b.get('user_id') in (None, user_id)]
     contact_rows = [dict(r) for r in db.get_contacts(conn, aid)]
+    if user_id is not None:
+        contact_rows = [c for c in contact_rows if c.get('user_id') in (None, user_id)]
     posts = db.get_posts(conn, aid)[:30]
     gap_rows = conn.execute(
         "SELECT gap FROM gaps WHERE author_id=?", (aid,)).fetchall()
@@ -209,6 +247,20 @@ class Handler(BaseHTTPRequestHandler):
         parsed = urllib.parse.urlparse(self.path)
         path, qs = parsed.path, urllib.parse.parse_qs(parsed.query)
         try:
+            if path == "/api/auth/me":
+                conn = db.get_conn()
+                try:
+                    user = get_current_user(self)
+                    if not user or user["status"] != "approved":
+                        self._json({"user": None}, 401)
+                    else:
+                        self._json({"user": {"id": user["id"], "username": user["username"], "role": user["role"], "status": user["status"]}})
+                finally:
+                    conn.close()
+                return
+            if path in ("/login", "/signup", "/admin"):
+                self._file(os.path.join(STATIC_DIR, "index.html"), "text/html; charset=utf-8")
+                return
             if path in ("/", "/index.html"):
                 self._file(os.path.join(STATIC_DIR, "index.html"),
                            "text/html; charset=utf-8")
@@ -223,33 +275,44 @@ class Handler(BaseHTTPRequestHandler):
                         "enabled": cfg["sources"].get(key, {}).get("enabled", False),
                     })
                 conn = db.get_conn()
-                counts = {r["platform"]: r["c"] for r in conn.execute(
-                    "SELECT platform, COUNT(*) c FROM identities GROUP BY platform")}
-                pending = conn.execute(
-                    "SELECT COUNT(*) c FROM suggested_matches WHERE status='pending'").fetchone()["c"]
-                total = conn.execute("SELECT COUNT(*) c FROM authors").fetchone()["c"]
-                conn.close()
-                self._json({"platforms": out, "identity_counts": counts,
-                            "pending_matches": pending, "total_authors": total})
+                try:
+                    counts = {r["platform"]: r["c"] for r in conn.execute(
+                        "SELECT platform, COUNT(*) c FROM identities GROUP BY platform")}
+                    pending = conn.execute(
+                        "SELECT COUNT(*) c FROM suggested_matches WHERE status='pending'").fetchone()["c"]
+                    total = conn.execute("SELECT COUNT(*) c FROM authors").fetchone()["c"]
+                    self._json({"platforms": out, "identity_counts": counts,
+                                "pending_matches": pending, "total_authors": total})
+                finally:
+                    conn.close()
             elif path == "/api/crawl/status":
                 self._json(manager.status())
             elif path == "/api/leads":
                 conn = db.get_conn()
                 try:
-                    self._json(leads_payload(conn, qs))
+                    user = require_user(self)
+                    self._json(leads_payload(conn, qs, user_id=user["id"]))
+                except PermissionError:
+                    self._json({"error": "login required"}, 401)
                 finally:
                     conn.close()
             elif path == "/api/author/count":
                 conn = db.get_conn()
                 try:
+                    user = require_user(self)
                     self._json({"total": conn.execute(
-                        "SELECT COUNT(*) c FROM authors").fetchone()["c"]})
+                        "SELECT COUNT(*) c FROM authors WHERE user_id=?", (user["id"],)).fetchone()["c"]})
+                except PermissionError:
+                    self._json({"error": "login required"}, 401)
                 finally:
                     conn.close()
             elif path.startswith("/api/matches"):
                 conn = db.get_conn()
                 try:
+                    user = require_user(self)
                     self._json({"matches": matching.pending(conn)})
+                except PermissionError:
+                    self._json({"error": "login required"}, 401)
                 finally:
                     conn.close()
             else:
@@ -257,9 +320,11 @@ class Handler(BaseHTTPRequestHandler):
                 if m:
                     conn = db.get_conn()
                     try:
-                        p = author_payload(conn, int(m.group(1)))
-                        self._json(p if p else {"error": "not found"},
-                                   200 if p else 404)
+                        user = require_user(self)
+                        p = author_payload(conn, int(m.group(1)), user_id=user["id"])
+                        self._json(p if p else {"error": "not found"}, 200 if p else 404)
+                    except PermissionError:
+                        self._json({"error": "login required"}, 401)
                     finally:
                         conn.close()
                 else:
@@ -272,12 +337,103 @@ class Handler(BaseHTTPRequestHandler):
         path = parsed.path
         body = self._body()
         try:
+            if path == "/api/auth/login":
+                username = str(body.get("username") or "").strip()
+                password = str(body.get("password") or "")
+                if not username or not password:
+                    self._json({"ok": False, "error": "username and password required"}, 400)
+                    return
+                conn = db.get_conn()
+                try:
+                    user = db.get_user_by_login(conn, username)
+                    if not user or user["status"] != "approved":
+                        self._json({"ok": False, "error": "account not approved or not found"}, 401)
+                        return
+                    if not db.verify_password(conn, user["id"], password):
+                        self._json({"ok": False, "error": "invalid password"}, 401)
+                        return
+                    token = db.create_session(conn, user["id"])
+                    self.send_response(200)
+                    self.send_header("Set-Cookie", f"{COOKIE_NAME}={token}; Path=/; HttpOnly; SameSite=Lax")
+                    self.send_header("Content-Type", "application/json; charset=utf-8")
+                    self.end_headers()
+                    self.wfile.write(json.dumps({"ok": True, "user": {"id": user["id"], "username": user["username"], "role": user["role"], "status": user["status"]}}).encode("utf-8"))
+                finally:
+                    conn.close()
+                return
+            if path == "/api/auth/logout":
+                conn = db.get_conn()
+                try:
+                    token = None
+                    cookie = self.headers.get("Cookie", "")
+                    if COOKIE_NAME + "=" in cookie:
+                        token = cookie.split(COOKIE_NAME + "=", 1)[1].split(";", 1)[0]
+                    if token:
+                        db.end_session(conn, token)
+                    self.send_response(200)
+                    self.send_header("Set-Cookie", f"{COOKIE_NAME}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0")
+                    self.send_header("Content-Type", "application/json; charset=utf-8")
+                    self.end_headers()
+                    self.wfile.write(json.dumps({"ok": True}).encode("utf-8"))
+                finally:
+                    conn.close()
+                return
+            if path == "/api/auth/signup":
+                username = str(body.get("username") or "").strip()
+                email = str(body.get("email") or "").strip().lower()
+                password = str(body.get("password") or "")
+                full_name = str(body.get("full_name") or "").strip()
+                if not username or not password:
+                    self._json({"ok": False, "error": "username and password required"}, 400)
+                    return
+                conn = db.get_conn()
+                try:
+                    user = db.create_user(conn, email=email or f"{username}@authoroutreach.local", password=password, username=username, full_name=full_name, role="user", status="pending")
+                    self._json({"ok": True, "message": "account created and awaiting admin approval", "user": {"id": user["id"], "status": user["status"]}})
+                except ValueError as e:
+                    self._json({"ok": False, "error": str(e)}, 409)
+                finally:
+                    conn.close()
+                return
+            if path == "/api/admin/users":
+                conn = db.get_conn()
+                try:
+                    user = require_user(self)
+                    if user["role"] != "admin":
+                        raise PermissionError("admin only")
+                    users = [dict(r) for r in db.list_users(conn)]
+                    self._json({"ok": True, "users": users})
+                except PermissionError:
+                    self._json({"error": "admin login required"}, 401)
+                finally:
+                    conn.close()
+                return
+            if path == "/api/admin/approve":
+                conn = db.get_conn()
+                try:
+                    user = require_user(self)
+                    if user["role"] != "admin":
+                        raise PermissionError("admin only")
+                    target_id = int(body.get("user_id"))
+                    action = body.get("action", "approve")
+                    if action == "approve":
+                        db.approve_user(conn, target_id, approved_by=user["username"])
+                    else:
+                        conn.execute("UPDATE users SET status='rejected', approved_by=?, approved_at=?, updated_at=? WHERE id=?", (user["username"], db.now_iso(), db.now_iso(), target_id))
+                    conn.commit()
+                    self._json({"ok": True})
+                except PermissionError:
+                    self._json({"error": "admin login required"}, 401)
+                finally:
+                    conn.close()
+                return
             enrich_match = re.match(r"^/api/author/(\d+)/enrich$", path)
             if enrich_match:
                 conn = db.get_conn()
                 try:
+                    user = require_user(self)
                     author_id = int(enrich_match.group(1))
-                    if not conn.execute("SELECT 1 FROM authors WHERE id=?", (author_id,)).fetchone():
+                    if not conn.execute("SELECT 1 FROM authors WHERE id=? AND user_id=?", (author_id, user["id"])).fetchone():
                         self._json({"error": "not found"}, 404)
                         return
                     before = len(db.get_contacts(conn, author_id))
@@ -291,6 +447,8 @@ class Handler(BaseHTTPRequestHandler):
                     total = len(db.get_contacts(conn, author_id))
                     self._json({"ok": True, "checked": checked,
                                 "added": max(0, total - before), "total": total})
+                except PermissionError:
+                    self._json({"error": "login required"}, 401)
                 finally:
                     conn.close()
             elif path == "/api/crawl":
@@ -300,16 +458,23 @@ class Handler(BaseHTTPRequestHandler):
             elif path == "/api/matches/scan":
                 conn = db.get_conn()
                 try:
+                    user = require_user(self)
                     n = matching.scan(conn)
                     self._json({"added": n})
+                except PermissionError:
+                    self._json({"error": "login required"}, 401)
                 finally:
                     conn.close()
             elif path == "/api/export":
                 conn = db.get_conn()
                 try:
+                    user = require_user(self)
                     cfg = load_config(CONFIG_PATH)
-                    csv_path, md_path, total = report.export_all(conn, cfg)
+                    csv_path, md_path, total = report.export_all(
+                        conn, cfg, user_id=user["id"])
                     self._json({"csv": csv_path, "md": md_path, "total": total})
+                except PermissionError:
+                    self._json({"error": "login required"}, 401)
                 finally:
                     conn.close()
             else:
@@ -319,6 +484,7 @@ class Handler(BaseHTTPRequestHandler):
                     return
                 conn = db.get_conn()
                 try:
+                    user = require_user(self)
                     if m.group(2) == "confirm":
                         kept = matching.confirm(conn, int(m.group(1)))
                         if kept:
@@ -332,6 +498,8 @@ class Handler(BaseHTTPRequestHandler):
                     else:
                         matching.reject(conn, int(m.group(1)))
                         self._json({"ok": True})
+                except PermissionError:
+                    self._json({"error": "login required"}, 401)
                 finally:
                     conn.close()
         except Exception as e:  # noqa: BLE001

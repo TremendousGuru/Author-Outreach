@@ -5,7 +5,15 @@ Cross-platform dedup happens here:
 - same platform+handle seen again  -> spotted_count + 1, last_seen updated
 - same normalized handle elsewhere -> merged into the same author
 - same pen name on two platforms   -> queued as a *suggested* match (matching.py)
+
+Multi-user support:
+- users: login + approval state
+- user_credentials: per-user source credentials (encrypted in production)
+- every major record can optionally be scoped to a user_id
 """
+import base64
+import hashlib
+import hmac
 import datetime
 import os
 import re
@@ -15,8 +23,43 @@ BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DB_PATH = os.path.join(BASE, "data", "prospects.db")
 
 SCHEMA = """
+CREATE TABLE IF NOT EXISTS users (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  username TEXT NOT NULL UNIQUE,
+  email TEXT DEFAULT '',
+  password_hash TEXT NOT NULL,
+  full_name TEXT DEFAULT '',
+  role TEXT NOT NULL DEFAULT 'user',
+  status TEXT NOT NULL DEFAULT 'pending',
+  approved_by TEXT DEFAULT '',
+  approved_at TEXT DEFAULT '',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS user_credentials (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL REFERENCES users(id),
+  platform TEXT NOT NULL,
+  username TEXT DEFAULT '',
+  password TEXT DEFAULT '',
+  api_key TEXT DEFAULT '',
+  token TEXT DEFAULT '',
+  metadata TEXT DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'active',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  UNIQUE(user_id, platform)
+);
+CREATE TABLE IF NOT EXISTS sessions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL REFERENCES users(id),
+  token TEXT NOT NULL UNIQUE,
+  created_at TEXT NOT NULL,
+  expires_at TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS authors (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER DEFAULT NULL REFERENCES users(id),
   display_name TEXT DEFAULT '',
   heat_score INTEGER DEFAULT 0,
   status TEXT DEFAULT 'new',
@@ -29,6 +72,7 @@ CREATE TABLE IF NOT EXISTS authors (
 );
 CREATE TABLE IF NOT EXISTS identities (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER DEFAULT NULL REFERENCES users(id),
   author_id INTEGER NOT NULL REFERENCES authors(id),
   platform TEXT NOT NULL,
   handle TEXT NOT NULL,
@@ -46,6 +90,7 @@ CREATE INDEX IF NOT EXISTS idx_ident_norm ON identities(norm);
 CREATE INDEX IF NOT EXISTS idx_ident_author ON identities(author_id);
 CREATE TABLE IF NOT EXISTS contacts (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER DEFAULT NULL REFERENCES users(id),
     author_id INTEGER NOT NULL REFERENCES authors(id),
     kind TEXT NOT NULL,
     value TEXT NOT NULL,
@@ -58,6 +103,7 @@ CREATE TABLE IF NOT EXISTS contacts (
 CREATE INDEX IF NOT EXISTS idx_contacts_author ON contacts(author_id);
 CREATE TABLE IF NOT EXISTS signals (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER DEFAULT NULL REFERENCES users(id),
   author_id INTEGER REFERENCES authors(id),
   signal TEXT,
   source TEXT,
@@ -66,6 +112,7 @@ CREATE TABLE IF NOT EXISTS signals (
 );
 CREATE TABLE IF NOT EXISTS posts (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER DEFAULT NULL REFERENCES users(id),
   identity_id INTEGER REFERENCES identities(id),
   platform TEXT,
   post_url TEXT,
@@ -75,6 +122,7 @@ CREATE TABLE IF NOT EXISTS posts (
 );
 CREATE TABLE IF NOT EXISTS gaps (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER DEFAULT NULL REFERENCES users(id),
   author_id INTEGER REFERENCES authors(id),
   gap TEXT,
   created_at TEXT,
@@ -82,6 +130,7 @@ CREATE TABLE IF NOT EXISTS gaps (
 );
 CREATE TABLE IF NOT EXISTS books (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER DEFAULT NULL REFERENCES users(id),
   author_id INTEGER NOT NULL REFERENCES authors(id),
   title TEXT NOT NULL,
   norm_title TEXT NOT NULL,
@@ -101,6 +150,7 @@ CREATE TABLE IF NOT EXISTS books (
 CREATE INDEX IF NOT EXISTS idx_books_author ON books(author_id);
 CREATE TABLE IF NOT EXISTS suggested_matches (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER DEFAULT NULL REFERENCES users(id),
   author_a INTEGER NOT NULL,
   author_b INTEGER NOT NULL,
   reason TEXT DEFAULT '',
@@ -110,6 +160,7 @@ CREATE TABLE IF NOT EXISTS suggested_matches (
 );
 CREATE TABLE IF NOT EXISTS crawl_runs (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER DEFAULT NULL REFERENCES users(id),
   platform TEXT,
   started_at TEXT,
   finished_at TEXT,
@@ -137,10 +188,165 @@ def get_conn():
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA busy_timeout=15000")
+    conn.execute("PRAGMA foreign_keys = ON")
     conn.executescript(SCHEMA)
     # migrations for databases created before these columns existed
     _ensure_column(conn, "authors", "notes", "TEXT DEFAULT ''")
+    _ensure_column(conn, "users", "username", "TEXT DEFAULT ''")
+    _ensure_column(conn, "users", "email", "TEXT DEFAULT ''")
+    _ensure_column(conn, "users", "role", "TEXT DEFAULT 'user'")
+    _ensure_column(conn, "users", "status", "TEXT DEFAULT 'pending'")
+    _ensure_column(conn, "users", "approved_by", "TEXT DEFAULT ''")
+    _ensure_column(conn, "users", "approved_at", "TEXT DEFAULT ''")
+    _ensure_column(conn, "users", "created_at", "TEXT DEFAULT ''")
+    _ensure_column(conn, "users", "updated_at", "TEXT DEFAULT ''")
+    for table in ["authors", "identities", "contacts", "signals", "posts", "gaps", "books", "suggested_matches", "crawl_runs"]:
+        _ensure_column(conn, table, "user_id", "INTEGER DEFAULT NULL")
+    ensure_default_admin(conn)
     return conn
+
+
+def _hash_password(password: str) -> str:
+    salt = os.urandom(16)
+    digest = hashlib.pbkdf2_hmac("sha256", (password or "").encode("utf-8"), salt, 310000)
+    salt_text = base64.b64encode(salt).decode("ascii")
+    digest_text = base64.b64encode(digest).decode("ascii")
+    return f"pbkdf2_sha256$310000${salt_text}${digest_text}"
+
+
+def create_user(conn, email, password, username=None, full_name="", role="user", status="pending"):
+    email = (email or "").strip().lower()
+    username = (username or "").strip()
+    if not username:
+        username = (email or "").split("@", 1)[0].strip() or "user"
+    if not password:
+        raise ValueError("password is required")
+    if conn.execute("SELECT 1 FROM users WHERE username=? OR email=?", (username, email)).fetchone():
+        raise ValueError("user already exists")
+    n = now_iso()
+    cur = conn.execute(
+        "INSERT INTO users(username, email, password_hash, full_name, role, status, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?)",
+        (username, email, _hash_password(password), full_name or "", role, status, n, n),
+    )
+    conn.commit()
+    return conn.execute("SELECT * FROM users WHERE id=?", (cur.lastrowid,)).fetchone()
+
+
+def get_user_by_email(conn, email):
+    return conn.execute("SELECT * FROM users WHERE email=?", ((email or "").strip().lower(),)).fetchone()
+
+
+def get_user_by_username(conn, username):
+    return conn.execute("SELECT * FROM users WHERE username=?", ((username or "").strip(),)).fetchone()
+
+
+def get_user_by_login(conn, username_or_email):
+    value = (username_or_email or "").strip()
+    if not value:
+        return None
+    return conn.execute(
+        "SELECT * FROM users WHERE username=? OR email=? LIMIT 1",
+        (value, value.lower()),
+    ).fetchone()
+
+
+def verify_password(conn, user_id, password):
+    row = conn.execute("SELECT password_hash FROM users WHERE id=?", (user_id,)).fetchone()
+    if not row:
+        return False
+    stored = row["password_hash"]
+    if stored.startswith("pbkdf2_sha256$"):
+        _, iterations, salt, expected = stored.split("$", 3)
+        actual = hashlib.pbkdf2_hmac(
+            "sha256", (password or "").encode("utf-8"),
+            base64.b64decode(salt), int(iterations),
+        )
+        return hmac.compare_digest(base64.b64decode(expected), actual)
+    if stored == hashlib.sha256((password or "").encode("utf-8")).hexdigest():
+        conn.execute("UPDATE users SET password_hash=? WHERE id=?",
+                     (_hash_password(password), user_id))
+        conn.commit()
+        return True
+    return False
+
+
+def approve_user(conn, user_id, approved_by="admin"):
+    conn.execute(
+        "UPDATE users SET status='approved', approved_by=?, approved_at=?, updated_at=? WHERE id=?",
+        (approved_by, now_iso(), now_iso(), user_id),
+    )
+    conn.commit()
+
+
+def list_users(conn):
+    return conn.execute("SELECT * FROM users ORDER BY created_at DESC").fetchall()
+
+
+def create_session(conn, user_id, expires_hours=24):
+    token = hashlib.sha256(f"{user_id}:{now_iso()}:{os.urandom(8)}".encode("utf-8")).hexdigest()
+    expires_at = (datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=expires_hours)).isoformat(timespec="seconds")
+    conn.execute("INSERT INTO sessions(user_id, token, created_at, expires_at) VALUES (?,?,?,?)",
+                 (user_id, token, now_iso(), expires_at))
+    conn.commit()
+    return token
+
+
+def get_session_user(conn, token):
+    row = conn.execute("SELECT user_id FROM sessions WHERE token=? AND expires_at > ?", (token, now_iso())).fetchone()
+    if not row:
+        return None
+    return conn.execute("SELECT * FROM users WHERE id=?", (row["user_id"],)).fetchone()
+
+
+def end_session(conn, token):
+    conn.execute("DELETE FROM sessions WHERE token=?", (token,))
+    conn.commit()
+
+
+def ensure_default_admin(conn):
+    admin_username = os.environ.get("AUTHOR_OUTREACH_ADMIN_USERNAME", "Tremendous")
+    admin = conn.execute(
+        "SELECT * FROM users WHERE username=? LIMIT 1", (admin_username,)).fetchone()
+    if not admin:
+        password = os.environ.get("AUTHOR_OUTREACH_ADMIN_PASSWORD", "")
+        if not password:
+            return None
+        admin = create_user(
+            conn,
+            email=os.environ.get("AUTHOR_OUTREACH_ADMIN_EMAIL",
+                                 "admin@authoroutreach.local"),
+            password=password,
+            username=admin_username,
+            full_name=admin_username,
+            role="admin",
+            status="approved",
+        )
+        conn.execute("UPDATE users SET approved_by='system', approved_at=? WHERE id=?",
+                     (now_iso(), admin["id"]))
+    if not admin:
+        return None
+
+    # Existing single-user records belong to the admin who owns this database.
+    conn.execute("UPDATE authors SET user_id=? WHERE user_id IS NULL", (admin["id"],))
+    for table in ("identities", "contacts", "signals", "gaps", "books"):
+        conn.execute(
+            f"""UPDATE {table} SET user_id=(
+                    SELECT user_id FROM authors WHERE authors.id={table}.author_id)
+                WHERE user_id IS NULL AND author_id IS NOT NULL"""
+        )
+    conn.execute(
+        """UPDATE posts SET user_id=(
+               SELECT authors.user_id FROM identities
+               JOIN authors ON authors.id=identities.author_id
+               WHERE identities.id=posts.identity_id)
+           WHERE user_id IS NULL AND identity_id IS NOT NULL"""
+    )
+    conn.execute("UPDATE suggested_matches SET user_id=? WHERE user_id IS NULL",
+                 (admin["id"],))
+    conn.execute("UPDATE crawl_runs SET user_id=? WHERE user_id IS NULL",
+                 (admin["id"],))
+    conn.commit()
+    return conn.execute("SELECT * FROM users WHERE id=?", (admin["id"],)).fetchone()
 
 
 def normalize_handle(handle: str) -> str:

@@ -1,6 +1,7 @@
 .env
 .env.*
 !.env.example
+.streamlit/secrets.toml
 __pycache__/
 *.py[cod]
 .venv/
@@ -8,4 +9,6 @@ venv/
 data/prospects.db
 data/prospects.db-*
 data/leads.csv
+data/leads_*.csv
 data/leads_report.md
+data/leads_report_*.md

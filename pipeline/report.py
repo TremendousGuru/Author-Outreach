@@ -10,13 +10,18 @@ from pipeline.scoring import GAP_TEXT
 HOT, WARM = 60, 40
 
 
-def _authors(conn):
-    return conn.execute(
+def _authors(conn, user_id=None):
+    sql = (
         """SELECT a.*, COUNT(i.id) AS n_identities,
                   SUM(i.spotted_count) AS total_spots
            FROM authors a LEFT JOIN identities i ON i.author_id = a.id
+           {where}
            GROUP BY a.id
-           ORDER BY a.heat_score DESC, a.first_seen ASC""").fetchall()
+           ORDER BY a.heat_score DESC, a.first_seen ASC"""
+    )
+    where = "WHERE a.user_id=?" if user_id is not None else ""
+    args = (user_id,) if user_id is not None else ()
+    return conn.execute(sql.format(where=where), args).fetchall()
 
 
 def _identities(conn, author_id):
@@ -30,16 +35,22 @@ def _gaps(conn, author_id):
     return [GAP_TEXT.get(r["gap"], r["gap"]) for r in rows]
 
 
-def _help_posts(conn, max_rows=15):
+def _help_posts(conn, max_rows=15, user_id=None):
     """Reddit posts where authors are literally asking for help — warm entry
     points for a helpful reply."""
     keys = ["no sales", "slow sales", "not selling", "struggling",
             "need reviews", "any advice", "how do i", "what am i doing wrong"]
     out = []
-    for r in conn.execute(
-            """SELECT p.text, p.post_url, i.handle, i.author_id
-               FROM posts p JOIN identities i ON p.identity_id = i.id
-               WHERE p.platform='reddit' ORDER BY p.posted_at DESC"""):
+    sql = """SELECT p.text, p.post_url, i.handle, i.author_id
+             FROM posts p JOIN identities i ON p.identity_id = i.id
+             JOIN authors a ON a.id = i.author_id
+             WHERE p.platform='reddit'"""
+    args = ()
+    if user_id is not None:
+        sql += " AND a.user_id=?"
+        args = (user_id,)
+    sql += " ORDER BY p.posted_at DESC"
+    for r in conn.execute(sql, args):
         t = (r["text"] or "").lower()
         if any(k in t for k in keys):
             out.append(dict(r))
@@ -48,14 +59,22 @@ def _help_posts(conn, max_rows=15):
     return out
 
 
-def export_all(conn, cfg):
+def export_all(conn, cfg, user_id=None):
     out_dir = os.path.join(os.path.dirname(os.path.dirname(
         os.path.abspath(__file__))), cfg["export"]["out_dir"])
     os.makedirs(out_dir, exist_ok=True)
-    csv_path = os.path.join(out_dir, cfg["export"]["csv"])
-    md_path = os.path.join(out_dir, cfg["export"]["report"])
+    csv_name = cfg["export"]["csv"]
+    md_name = cfg["export"]["report"]
+    if user_id is not None:
+        csv_base, csv_ext = os.path.splitext(csv_name)
+        md_base, md_ext = os.path.splitext(md_name)
+        suffix = f"_user_{user_id}"
+        csv_name = f"{csv_base}{suffix}{csv_ext}"
+        md_name = f"{md_base}{suffix}{md_ext}"
+    csv_path = os.path.join(out_dir, csv_name)
+    md_path = os.path.join(out_dir, md_name)
 
-    authors = _authors(conn)
+    authors = _authors(conn, user_id)
 
     # ---------- CSV ----------
     with open(csv_path, "w", newline="", encoding="utf-8") as f:
@@ -166,7 +185,7 @@ def export_all(conn, cfg):
                          f"{plats} | {gaps[0] if gaps else '—'} |")
         lines.append("")
 
-    help_posts = _help_posts(conn)
+    help_posts = _help_posts(conn, user_id=user_id)
     if help_posts:
         lines += ["## 💬 Authors asking for help on Reddit right now — "
                   "reply helpfully, build trust", ""]
