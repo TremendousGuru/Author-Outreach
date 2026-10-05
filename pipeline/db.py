@@ -431,6 +431,28 @@ def get_books(conn, author_id):
         (author_id,)).fetchall()
 
 
+def get_leads(conn, user_id=None, search="", platform="Any", status="Any",
+              include_all=False):
+    if user_id is None and not include_all:
+        return []
+    sql = "SELECT a.* FROM authors a WHERE 1=1"
+    args = []
+    if not include_all:
+        sql += " AND a.user_id=?"
+        args.append(user_id)
+    if search:
+        sql += " AND LOWER(a.display_name) LIKE ?"
+        args.append(f"%{search.lower()}%")
+    if status != "Any":
+        sql += " AND a.status=?"
+        args.append(status)
+    if platform != "Any":
+        sql += " AND EXISTS (SELECT 1 FROM identities i WHERE i.author_id=a.id AND i.platform=?)"
+        args.append(platform)
+    sql += " ORDER BY a.heat_score DESC, a.last_seen DESC"
+    return conn.execute(sql, args).fetchall()
+
+
 def upsert_contact(conn, author_id, kind, value, source_url="",
                    source_platform=""):
     value = (value or "").strip()

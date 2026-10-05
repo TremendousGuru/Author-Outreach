@@ -9,7 +9,7 @@ each profile and draft the personalized outreach yourself.
 
 ```bash
 cd author-outreach
-pip install -r requirements.txt   # requests + PyYAML only
+pip install -r requirements.txt   # app dependencies
 python3 server.py                 # → http://localhost:8000
 ```
 
@@ -69,17 +69,20 @@ python3 run_discovery.py --list   # show all platforms & their status
 | **AllAuthor** | public author directory and profiles | ✅ working |
 | **Reedsy Discovery** | public discovery pages and book listings | ✅ working |
 | **Wattpad** | public stories and author profile pages | ✅ working |
-| Book Commentary | — | ⛔ dead / not a valid crawl target |
+| **The Book Commentary** | public romance and sci-fi/fantasy reviews, book titles, authors | ✅ working |
 | Facebook / Instagram / Threads / Amazon / Goodreads | — | deliberately excluded (ban/ToS risk) |
 
 ## The workflow the dashboard supports
 
 1. **Crawl** — one platform at a time, selected from the dropdown, live log.
 2. **Leads** — filter by platform / tier / your criteria / status / search.
+  Admins see all generated leads without a score cutoff; user accounts only
+  see their own leads.
    Criteria flags: **0–50 reviews · just launched · not yet popular ·
    weak advertising content** (✓ / ✗ / ? = unknown yet).
 3. **Author profile** — everything in one place:
    - identities across platforms (spotted-count, last seen)
+  - books that meet the qualification criteria, with the matching reasons
    - books with direct source listing links, genre, popularity, ratings,
      **Amazon/Goodreads check links**, and manual review-count fields
    - publicly listed email addresses and author/contact websites, each linked

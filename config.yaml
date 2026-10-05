@@ -51,6 +51,7 @@ sources:
   allauthor: {enabled: true, max_authors: 6}
   reedsy: {enabled: true, max_books: 6}
   wattpad: {enabled: true, max_stories: 6}
+  bookcommentary: {enabled: true, max_reviews: 12}
 
 scoring:
   genre_specific:

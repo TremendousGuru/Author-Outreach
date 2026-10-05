@@ -48,6 +48,10 @@ REGISTRY = {
         "label": "Wattpad", "built": True, "status": "ok",
         "group": "Writing community", "note": "Public stories and author pages; no login required for the crawl",
     },
+    "bookcommentary": {
+        "label": "The Book Commentary", "built": True, "status": "ok",
+        "group": "Book reviews", "note": "Public romance and sci-fi/fantasy book reviews and author names",
+    },
 }
 
 
@@ -79,4 +83,7 @@ def get_adapter(key):
     if key == "wattpad":
         from pipeline.sources import wattpad
         return wattpad
+    if key == "bookcommentary":
+        from pipeline.sources import bookcommentary
+        return bookcommentary
     raise KeyError(f"no adapter for {key}")

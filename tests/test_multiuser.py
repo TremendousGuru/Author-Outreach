@@ -72,6 +72,38 @@ class MultiUserAuthTests(unittest.TestCase):
             self.assertIn('Alice Author', report_text)
             self.assertNotIn('Bob Author', report_text)
 
+    def test_admin_can_access_all_scores_and_more_than_1500_leads(self):
+        alice = db.create_user(self.conn, 'alice@example.com', 'alice-pass',
+                               username='alice', status='approved')
+        bob = db.create_user(self.conn, 'bob@example.com', 'bob-pass',
+                             username='bob', status='approved')
+        generated = [
+            (alice['id'], f'Low score lead {index}', 0, '2026-01-01')
+            for index in range(1501)
+        ]
+        generated.extend([
+            (bob['id'], 'Other account lead', 90, '2026-01-01'),
+            (None, 'Unassigned legacy lead', -1, '2026-01-01'),
+        ])
+        self.conn.executemany(
+            "INSERT INTO authors(user_id, display_name, heat_score, first_seen) VALUES (?,?,?,?)",
+            generated,
+        )
+        self.conn.commit()
+
+        admin_leads = db.get_leads(self.conn, include_all=True)
+        alice_leads = db.get_leads(self.conn, user_id=alice['id'])
+
+        self.assertEqual(len(admin_leads), 1503)
+        self.assertEqual(len(alice_leads), 1501)
+        self.assertTrue(any(lead['heat_score'] == 0 for lead in admin_leads))
+        self.assertTrue(any(lead['display_name'] == 'Other account lead'
+                            for lead in admin_leads))
+        self.assertTrue(any(lead['display_name'] == 'Unassigned legacy lead'
+                            for lead in admin_leads))
+        self.assertFalse(any(lead['display_name'] == 'Other account lead'
+                             for lead in alice_leads))
+
     def test_legacy_records_are_assigned_to_default_admin(self):
         author_id = self.conn.execute(
             "INSERT INTO authors(display_name, first_seen) VALUES (?,?)",

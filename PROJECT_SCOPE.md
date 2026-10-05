@@ -31,12 +31,12 @@ messaging of any kind.**
 | 7 | **Reedsy Discovery** | ✅ Verified via public discovery pages | new indie books + review counts | ✅ |
 | 8 | **Wattpad** | ✅ Verified via public story/search pages | public stories, author metadata, romance/fantasy titles | ✅ |
 | 9 | **Royal Road** | ⚠️ Cloudflare may challenge; verify from your machine | serialized fantasy/romantasy, **ratings count, followers**, author pages | ✅ |
-| 10 | **Book Commentary** | ❌ Dead / not a valid public crawl target | — (manual browsing only, or drop) | — |
+| 10 | **The Book Commentary** | ✅ Public reviews crawl enabled | romance and sci-fi/fantasy review pages, book titles and listed authors | ✅ |
 
 **Named corrections found during verification:** `bookcave.com` is a parked ad
-domain — the real site is **mybookcave.com**. `bookcommentary.com` actively
-blocks bots, so it cannot be crawled even for free; it stays on a manual list
-unless we find an alternative route.
+domain — the real site is **mybookcave.com**. The Book Commentary crawl uses
+public review listings and detail pages only; it does not access login-only
+content.
 
 **Deliberately excluded (ban risk, agreed earlier):** Facebook, Instagram,
 Threads scraping, and any logged-in scraping. **Amazon & Goodreads: no
@@ -156,7 +156,7 @@ design below, which keeps us at $0.
 |---|---|---|
 | Crawl speed | Polite delays (Smashwords requires 4s/page; others ~1–3s) | a platform run takes minutes, not seconds — fine for daily use |
 | Amazon/Goodreads review counts | They block scrapers; their ToS forbids it | one-click search link per book; you type the count (15 sec/book) — the $0 trade-off |
-| Cloudflare/JS sites (Book Commentary; Royal Road from cloud IPs) | bot protection | verified to work where possible from your home connection; otherwise manual |
+| Cloudflare/JS sites (Royal Road from cloud IPs) | bot protection | verified to work where possible from your home connection; otherwise manual |
 | Genre/gap detection accuracy | keyword heuristics (~85% right) | profiles always show the raw bio + posts so you can eyeball before writing |
 | Directories are finite | Smashwords/AllAuthor lists don't grow daily | re-crawl weekly; discovery volume then comes mostly from Bluesky/Reddit |
 | Scale | SQLite handles tens of thousands of profiles comfortably | beyond that (far future) → bigger DB, still free (PostgreSQL) |
@@ -192,8 +192,7 @@ design below, which keeps us at $0.
 
 ## 9. Decisions I need from you before building Phase A
 
-1. Confirm the platform set (§2.1) — including dropping Book Commentary to
-   "manual list" status.
+1. Confirm the platform set (§2.1) and the public-only crawl boundaries.
 2. Confirm the dashboard (browser-based, dropdown) is what you pictured.
 3. Confirm the manual Amazon/Goodreads check-links approach is acceptable at
    zero budget.

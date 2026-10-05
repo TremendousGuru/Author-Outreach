@@ -236,6 +236,8 @@ def _days_ago(date_str, cutoff_days):
         return None
     try:
         d = datetime.datetime.fromisoformat(str(date_str).replace("Z", "+00:00"))
+        if d.tzinfo is None:
+            d = d.replace(tzinfo=datetime.timezone.utc)
         return (datetime.datetime.now(datetime.timezone.utc) - d).days <= cutoff_days
     except ValueError:
         return None
@@ -267,13 +269,32 @@ def evaluate_criteria(books, analysis):
 
     gaps = analysis.get("gaps", []) if analysis else []
     debut = "debut_no_launch_system" in gaps
-    recent_book = any(_days_ago(b["first_seen"], 90) for b in books)
+    recent_book = any(_days_ago(b["pub_date"], 90) for b in books)
     if debut or recent_book:
         flags["just_launched"] = True
-    elif books and all(b["first_seen"] and not _days_ago(b["first_seen"], 90) for b in books):
+    elif books and all(b["pub_date"] and not _days_ago(b["pub_date"], 90) for b in books):
         flags["just_launched"] = False
 
     weak = {"no_own_website", "no_email_capture", "no_links_in_bio",
             "low_posting_cadence"} & set(gaps)
     flags["weak_ad_content"] = bool(weak)
     return flags
+
+
+CRITERIA_LABELS = {
+    "reviews_0_50": "0–50 reviews/ratings",
+    "just_launched": "recently published or debut",
+    "low_popularity": "low visible popularity",
+    "weak_ad_content": "weak advertising content",
+}
+
+
+def books_meeting_criteria(books, analysis):
+    qualified = []
+    for book in books:
+        flags = evaluate_criteria([book], analysis)
+        criteria = [label for key, label in CRITERIA_LABELS.items()
+                    if flags[key] is True]
+        if criteria:
+            qualified.append({"book": book, "criteria": criteria})
+    return qualified

@@ -8,7 +8,7 @@ import streamlit as st
 BASE = Path(__file__).resolve().parent
 sys.path.insert(0, str(BASE))
 
-from pipeline import contacts, db, matching, report  # noqa: E402
+from pipeline import contacts, db, matching, report, scoring  # noqa: E402
 from pipeline.crawler import CrawlManager, load_config  # noqa: E402
 from pipeline.sources import REGISTRY  # noqa: E402
 
@@ -130,37 +130,27 @@ def crawl_page(conn, user):
     st.caption("Cloud instances may stop background crawls when they sleep or restart.")
 
 
-def load_leads(conn, user_id, search, platform, status, limit=1500):
-    sql = "SELECT * FROM authors WHERE user_id=?"
-    args = [user_id]
-    if search:
-        sql += " AND LOWER(display_name) LIKE ?"
-        args.append(f"%{search.lower()}%")
-    if status != "Any":
-        sql += " AND status=?"
-        args.append(status)
-    if platform != "Any":
-        sql += " AND EXISTS (SELECT 1 FROM identities i WHERE i.author_id=authors.id AND i.platform=?)"
-        args.append(platform)
-    sql += " ORDER BY heat_score DESC, last_seen DESC LIMIT ?"
-    args.append(limit)
-    return conn.execute(sql, args).fetchall()
-
-
-def leads_page(conn, user_id):
+def leads_page(conn, user):
     st.subheader("Leads")
-    identities = conn.execute(
-        "SELECT DISTINCT platform FROM identities WHERE user_id=? ORDER BY platform", (user_id,)
-    ).fetchall()
+    if user["role"] == "admin":
+        identities = conn.execute(
+            "SELECT DISTINCT platform FROM identities ORDER BY platform").fetchall()
+    else:
+        identities = conn.execute(
+            "SELECT DISTINCT platform FROM identities WHERE user_id=? ORDER BY platform",
+            (user["id"],)).fetchall()
     platforms = ["Any"] + [row["platform"] for row in identities]
     search_col, platform_col, status_col = st.columns([2, 1, 1])
     search = search_col.text_input("Search author")
     platform = platform_col.selectbox("Platform", platforms)
     status = status_col.selectbox("Status", ["Any", "new", "reviewing", "messaged", "replied", "won", "lost", "skip"])
-    authors = load_leads(conn, user_id, search, platform, status)
+    authors = db.get_leads(
+        conn, user_id=user["id"], search=search, platform=platform,
+        status=status, include_all=user["role"] == "admin")
     if not authors:
         st.info("No leads for this account yet.")
         return
+    st.caption(f"{len(authors)} leads shown. No score threshold is applied.")
     rows = [{"Score": author["heat_score"], "Author": author["display_name"],
              "Status": author["status"], "Last seen": author["last_seen"]}
             for author in authors]
@@ -168,12 +158,15 @@ def leads_page(conn, user_id):
     options = {f"{author['display_name'] or 'Unknown'} (#{author['id']})": author["id"]
                for author in authors}
     selected = st.selectbox("Open author", list(options))
-    author_profile(conn, options[selected], user_id)
+    author_profile(conn, options[selected], user["id"], is_admin=user["role"] == "admin")
 
 
-def author_profile(conn, author_id, user_id):
-    author = conn.execute("SELECT * FROM authors WHERE id=? AND user_id=?",
-                          (author_id, user_id)).fetchone()
+def author_profile(conn, author_id, user_id, is_admin=False):
+    if is_admin:
+        author = conn.execute("SELECT * FROM authors WHERE id=?", (author_id,)).fetchone()
+    else:
+        author = conn.execute("SELECT * FROM authors WHERE id=? AND user_id=?",
+                              (author_id, user_id)).fetchone()
     if not author:
         st.error("Author not found.")
         return
@@ -181,11 +174,25 @@ def author_profile(conn, author_id, user_id):
     identities = conn.execute("SELECT * FROM identities WHERE author_id=?", (author_id,)).fetchall()
     books = db.get_books(conn, author_id)
     contact_rows = db.get_contacts(conn, author_id)
+    config = load_config(str(CONFIG_PATH))
+    analysis = scoring.analyze(
+        db.get_author_text(conn, author_id), db.get_posts(conn, author_id), config)
+    qualifying_books = scoring.books_meeting_criteria(books, analysis)
     left, right = st.columns(2)
     with left:
         st.markdown("**Profiles**")
         for identity in identities:
             st.markdown(f"- [{identity['platform']}: {identity['handle']}]({identity['platform_url']})")
+        st.markdown("**Books meeting criteria**")
+        if qualifying_books:
+            for item in qualifying_books:
+                book = item["book"]
+                st.markdown(f"**{book['title']}**")
+                st.caption("Meets: " + ", ".join(item["criteria"]))
+                if book["book_url"]:
+                    st.markdown(f"[Open source listing]({book['book_url']})")
+        else:
+            st.info("No books currently meet a known criterion. Add review counts or publication dates when available.")
         st.markdown("**Books**")
         for book in books:
             st.markdown(f"- [{book['title']}]({book['book_url']})" if book["book_url"] else f"- {book['title']}")
@@ -225,9 +232,10 @@ def matches_page(conn, user):
         st.info("No pending matches.")
 
 
-def export_page(conn, user_id):
+def export_page(conn, user):
     st.subheader("Export your leads")
     config = load_config(str(CONFIG_PATH))
+    user_id = None if user["role"] == "admin" else user["id"]
     csv_path, report_path, total = report.export_all(conn, config, user_id=user_id)
     st.write(f"Prepared exports for {total} leads.")
     csv_bytes = Path(csv_path).read_bytes()
@@ -260,11 +268,11 @@ def main():
         if page == "Crawl":
             crawl_page(conn, user)
         elif page == "Leads":
-            leads_page(conn, user["id"])
+            leads_page(conn, user)
         elif page == "Matches":
             matches_page(conn, user)
         else:
-            export_page(conn, user["id"])
+            export_page(conn, user)
     finally:
         conn.close()
 
